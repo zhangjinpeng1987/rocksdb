@@ -27,11 +27,13 @@
 #include "port/win/win_logger.h"
 
 #include "util/random.h"
+#include "util/coding.h"
 #include "util/iostats_context_imp.h"
 #include "util/rate_limiter.h"
 #include "util/sync_point.h"
 #include "util/aligned_buffer.h"
 
+#include "util/threadpool.h"
 #include "util/thread_status_updater.h"
 #include "util/thread_status_util.h"
 
@@ -53,13 +55,14 @@ std::string GetWindowsErrSz(DWORD err) {
   return Err;
 }
 
-namespace {
-
-const size_t c_OneMB = (1 << 20);
 
 ThreadStatusUpdater* CreateThreadStatusUpdater() {
   return new ThreadStatusUpdater();
 }
+
+namespace {
+
+const size_t c_OneMB = (1 << 20);
 
 inline Status IOErrorFromWindowsError(const std::string& context, DWORD err) {
   return Status::IOError(context, GetWindowsErrSz(err));
@@ -197,6 +200,31 @@ inline Status ftruncate(const std::string& filename, HANDLE hFile,
   return status;
 }
 
+size_t GetUniqueIdFromFile(HANDLE hFile, char* id, size_t max_size) {
+
+  if (max_size < kMaxVarint64Length * 3) {
+    return 0;
+  }
+
+  BY_HANDLE_FILE_INFORMATION FileInfo;
+
+  BOOL result = GetFileInformationByHandle(hFile, &FileInfo);
+
+  TEST_SYNC_POINT_CALLBACK("GetUniqueIdFromFile:FS_IOC_GETVERSION", &result);
+
+  if (!result) {
+    return 0;
+  }
+
+  char* rid = id;
+  rid = EncodeVarint64(rid, uint64_t(FileInfo.dwVolumeSerialNumber));
+  rid = EncodeVarint64(rid, uint64_t(FileInfo.nFileIndexHigh));
+  rid = EncodeVarint64(rid, uint64_t(FileInfo.nFileIndexLow));
+
+  assert(rid >= id);
+  return static_cast<size_t>(rid - id);
+}
+
 // mmap() based random-access
 class WinMmapReadableFile : public RandomAccessFile {
   const std::string fileName_;
@@ -244,6 +272,10 @@ class WinMmapReadableFile : public RandomAccessFile {
 
   virtual Status InvalidateCache(size_t offset, size_t length) override {
     return Status::OK();
+  }
+
+  virtual size_t GetUniqueId(char* id, size_t max_size) const override {
+    return GetUniqueIdFromFile(hFile_, id, max_size);
   }
 };
 
@@ -590,6 +622,10 @@ class WinMmapFile : public WritableFile {
     }
     return status;
   }
+
+  virtual size_t GetUniqueId(char* id, size_t max_size) const override {
+    return GetUniqueIdFromFile(hFile_, id, max_size);
+  }
 };
 
 class WinSequentialFile : public SequentialFile {
@@ -914,6 +950,10 @@ class WinRandomAccessFile : public RandomAccessFile {
   virtual Status InvalidateCache(size_t offset, size_t length) override {
     return Status::OK();
   }
+
+  virtual size_t GetUniqueId(char* id, size_t max_size) const override {
+    return GetUniqueIdFromFile(hFile_, id, max_size);
+  }
 };
 
 // This is a sequential write class. It has been mimicked (as others) after
@@ -1086,6 +1126,10 @@ class WinWritableFile : public WritableFile {
       reservedsize_ = spaceToReserve;
     }
     return status;
+  }
+
+  virtual size_t GetUniqueId(char* id, size_t max_size) const override {
+    return GetUniqueIdFromFile(hFile_, id, max_size);
   }
 };
 
@@ -1833,257 +1877,6 @@ class WinEnv : public Env {
   }
 
   bool SupportsFastAllocate(const std::string& /* path */) { return false; }
-
-  class ThreadPool {
-   public:
-    ThreadPool()
-        : total_threads_limit_(1),
-          bgthreads_(0),
-          queue_(),
-          queue_len_(0U),
-          exit_all_threads_(false),
-          low_io_priority_(false),
-          env_(nullptr) {}
-
-    ~ThreadPool() { assert(bgthreads_.size() == 0U); }
-
-    void JoinAllThreads() {
-      {
-        std::lock_guard<std::mutex> lock(mu_);
-        assert(!exit_all_threads_);
-        exit_all_threads_ = true;
-        bgsignal_.notify_all();
-      }
-
-      for (std::thread& th : bgthreads_) {
-        th.join();
-      }
-
-      // Subject to assert in the __dtor
-      bgthreads_.clear();
-    }
-
-    void SetHostEnv(Env* env) { env_ = env; }
-
-    // Return true if there is at least one thread needs to terminate.
-    bool HasExcessiveThread() const {
-      return bgthreads_.size() > total_threads_limit_;
-    }
-
-    // Return true iff the current thread is the excessive thread to terminate.
-    // Always terminate the running thread that is added last, even if there are
-    // more than one thread to terminate.
-    bool IsLastExcessiveThread(size_t thread_id) const {
-      return HasExcessiveThread() && thread_id == bgthreads_.size() - 1;
-    }
-
-    // Is one of the threads to terminate.
-    bool IsExcessiveThread(size_t thread_id) const {
-      return thread_id >= total_threads_limit_;
-    }
-
-    // Return the thread priority.
-    // This would allow its member-thread to know its priority.
-    Env::Priority GetThreadPriority() { return priority_; }
-
-    // Set the thread priority.
-    void SetThreadPriority(Env::Priority priority) { priority_ = priority; }
-
-    void BGThread(size_t thread_id) {
-      while (true) {
-        // Wait until there is an item that is ready to run
-        std::unique_lock<std::mutex> uniqueLock(mu_);
-
-        // Stop waiting if the thread needs to do work or needs to terminate.
-        while (!exit_all_threads_ && !IsLastExcessiveThread(thread_id) &&
-               (queue_.empty() || IsExcessiveThread(thread_id))) {
-          bgsignal_.wait(uniqueLock);
-        }
-
-        if (exit_all_threads_) {
-          // mechanism to let BG threads exit safely
-          uniqueLock.unlock();
-          break;
-        }
-
-        if (IsLastExcessiveThread(thread_id)) {
-          // Current thread is the last generated one and is excessive.
-          // We always terminate excessive thread in the reverse order of
-          // generation time.
-          std::thread& terminating_thread = bgthreads_.back();
-          auto tid = terminating_thread.get_id();
-          // Ensure that this thread is ours
-          assert(tid == std::this_thread::get_id());
-          terminating_thread.detach();
-          bgthreads_.pop_back();
-
-          if (HasExcessiveThread()) {
-            // There is still at least more excessive thread to terminate.
-            WakeUpAllThreads();
-          }
-
-          uniqueLock.unlock();
-
-          PrintThreadInfo(thread_id, gettid());
-          break;
-        }
-
-        void (*function)(void*) = queue_.front().function;
-        void* arg = queue_.front().arg;
-        queue_.pop_front();
-        queue_len_.store(queue_.size(), std::memory_order_relaxed);
-
-        uniqueLock.unlock();
-        (*function)(arg);
-      }
-    }
-
-    // Helper struct for passing arguments when creating threads.
-    struct BGThreadMetadata {
-      ThreadPool* thread_pool_;
-      size_t thread_id_;  // Thread count in the thread.
-
-      BGThreadMetadata(ThreadPool* thread_pool, size_t thread_id)
-          : thread_pool_(thread_pool), thread_id_(thread_id) {}
-    };
-
-    static void* BGThreadWrapper(void* arg) {
-      std::unique_ptr<BGThreadMetadata> meta(
-          reinterpret_cast<BGThreadMetadata*>(arg));
-
-      size_t thread_id = meta->thread_id_;
-      ThreadPool* tp = meta->thread_pool_;
-
-#if ROCKSDB_USING_THREAD_STATUS
-      // for thread-status
-      ThreadStatusUtil::RegisterThread(
-          tp->env_, (tp->GetThreadPriority() == Env::Priority::HIGH
-                         ? ThreadStatus::HIGH_PRIORITY
-                         : ThreadStatus::LOW_PRIORITY));
-#endif
-      tp->BGThread(thread_id);
-#if ROCKSDB_USING_THREAD_STATUS
-      ThreadStatusUtil::UnregisterThread();
-#endif
-      return nullptr;
-    }
-
-    void WakeUpAllThreads() { bgsignal_.notify_all(); }
-
-    void SetBackgroundThreadsInternal(size_t num, bool allow_reduce) {
-      std::lock_guard<std::mutex> lg(mu_);
-
-      if (exit_all_threads_) {
-        return;
-      }
-
-      if (num > total_threads_limit_ ||
-          (num < total_threads_limit_ && allow_reduce)) {
-        total_threads_limit_ = std::max(size_t(1), num);
-        WakeUpAllThreads();
-        StartBGThreads();
-      }
-      assert(total_threads_limit_ > 0);
-    }
-
-    void IncBackgroundThreadsIfNeeded(int num) {
-      SetBackgroundThreadsInternal(num, false);
-    }
-
-    void SetBackgroundThreads(int num) {
-      SetBackgroundThreadsInternal(num, true);
-    }
-
-    void StartBGThreads() {
-      // Start background thread if necessary
-      while (bgthreads_.size() < total_threads_limit_) {
-        std::thread p_t(&ThreadPool::BGThreadWrapper,
-                        new BGThreadMetadata(this, bgthreads_.size()));
-        bgthreads_.push_back(std::move(p_t));
-      }
-    }
-
-    void Schedule(void (*function)(void* arg1), void* arg, void* tag,
-                  void (*unschedFunction)(void* arg)) {
-      std::lock_guard<std::mutex> lg(mu_);
-
-      if (exit_all_threads_) {
-        return;
-      }
-
-      StartBGThreads();
-
-      // Add to priority queue
-      queue_.push_back(BGItem());
-      queue_.back().function = function;
-      queue_.back().arg = arg;
-      queue_.back().tag = tag;
-      queue_.back().unschedFunction = unschedFunction;
-      queue_len_.store(queue_.size(), std::memory_order_relaxed);
-
-      if (!HasExcessiveThread()) {
-        // Wake up at least one waiting thread.
-        bgsignal_.notify_one();
-      } else {
-        // Need to wake up all threads to make sure the one woken
-        // up is not the one to terminate.
-        WakeUpAllThreads();
-      }
-    }
-
-    int UnSchedule(void* arg) {
-      int count = 0;
-
-      std::lock_guard<std::mutex> lg(mu_);
-
-      // Remove from priority queue
-      BGQueue::iterator it = queue_.begin();
-      while (it != queue_.end()) {
-        if (arg == (*it).tag) {
-          void (*unschedFunction)(void*) = (*it).unschedFunction;
-          void* arg1 = (*it).arg;
-          if (unschedFunction != nullptr) {
-            (*unschedFunction)(arg1);
-          }
-          it = queue_.erase(it);
-          count++;
-        } else {
-          ++it;
-        }
-      }
-
-      queue_len_.store(queue_.size(), std::memory_order_relaxed);
-
-      return count;
-    }
-
-    unsigned int GetQueueLen() const {
-      return static_cast<unsigned int>(
-          queue_len_.load(std::memory_order_relaxed));
-    }
-
-   private:
-    // Entry per Schedule() call
-    struct BGItem {
-      void* arg;
-      void (*function)(void*);
-      void* tag;
-      void (*unschedFunction)(void*);
-    };
-
-    typedef std::deque<BGItem> BGQueue;
-
-    std::mutex mu_;
-    std::condition_variable bgsignal_;
-    size_t total_threads_limit_;
-    std::vector<std::thread> bgthreads_;
-    BGQueue queue_;
-    std::atomic_size_t queue_len_;  // Queue length. Used for stats reporting
-    bool exit_all_threads_;
-    bool low_io_priority_;
-    Env::Priority priority_;
-    Env* env_;
-  };
 
   bool checkedDiskForMmap_;
   bool forceMmapOff;  // do we override Env options?

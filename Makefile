@@ -271,6 +271,7 @@ TESTS = \
 	db_tailing_iter_test \
 	db_universal_compaction_test \
 	db_wal_test \
+	db_io_failure_test \
 	db_properties_test \
 	db_table_properties_test \
 	block_hash_index_test \
@@ -297,6 +298,7 @@ TESTS = \
 	file_reader_writer_test \
 	block_based_filter_block_test \
 	full_filter_block_test \
+	hash_table_test \
 	histogram_test \
 	inlineskiplist_test \
 	log_test \
@@ -852,6 +854,9 @@ stringappend_test: utilities/merge_operators/string_append/stringappend_test.o $
 redis_test: utilities/redis/redis_lists_test.o $(LIBOBJECTS) $(TESTHARNESS)
 	$(AM_LINK)
 
+hash_table_test: utilities/persistent_cache/hash_table_test.o $(LIBOBJECTS) $(TESTHARNESS)
+	$(AM_LINK)
+
 histogram_test: util/histogram_test.o $(LIBOBJECTS) $(TESTHARNESS)
 	$(AM_LINK)
 
@@ -910,6 +915,9 @@ db_universal_compaction_test: db/db_universal_compaction_test.o db/db_test_util.
 	$(AM_LINK)
 
 db_wal_test: db/db_wal_test.o db/db_test_util.o $(LIBOBJECTS) $(TESTHARNESS)
+	$(AM_LINK)
+
+db_io_failure_test: db/db_io_failure_test.o db/db_test_util.o $(LIBOBJECTS) $(TESTHARNESS)
 	$(AM_LINK)
 
 db_properties_test: db/db_properties_test.o db/db_test_util.o $(LIBOBJECTS) $(TESTHARNESS)

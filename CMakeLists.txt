@@ -183,6 +183,7 @@ set(SOURCES
         table/plain_table_index.cc
         table/plain_table_key_coding.cc
         table/plain_table_reader.cc
+        table/persistent_cache_helper.cc
         table/table_properties.cc
         table/two_level_iterator.cc
         tools/sst_dump_tool.cc
@@ -237,6 +238,7 @@ set(SOURCES
         util/testharness.cc
         util/testutil.cc
         util/thread_local.cc
+        util/threadpool.cc
         util/thread_status_impl.cc
         util/thread_status_updater.cc
         util/thread_status_util.cc

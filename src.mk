@@ -82,6 +82,7 @@ LIB_SOURCES =                                                   \
   table/plain_table_index.cc                                    \
   table/plain_table_key_coding.cc                               \
   table/plain_table_reader.cc                                   \
+  table/persistent_cache_helper.cc                              \
   table/table_properties.cc                                     \
   table/two_level_iterator.cc                                   \
   tools/dump/db_dump_tool.cc                                    \
@@ -101,9 +102,9 @@ LIB_SOURCES =                                                   \
   util/env_hdfs.cc                                              \
   util/env_posix.cc                                             \
   util/io_posix.cc                                              \
-  util/thread_posix.cc                                          \
+  util/threadpool.cc                                            \
   util/transaction_test_util.cc                                 \
-  util/sst_file_manager_impl.cc                                     \
+  util/sst_file_manager_impl.cc                                 \
   util/file_util.cc                                             \
   util/file_reader_writer.cc                                    \
   util/filter_policy.cc                                         \
@@ -201,6 +202,7 @@ TEST_BENCH_SOURCES =                                                    \
   db/db_iter_test.cc                                                    \
   db/db_test.cc                                                         \
 	db/db_block_cache_test.cc																							\
+  db/db_io_failure_test.cc                                              \
   db/db_bloom_filter_test.cc                                            \
   db/db_compaction_filter_test.cc                                       \
   db/db_compaction_test.cc                                              \
