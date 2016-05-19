@@ -31,6 +31,7 @@
 
 #include "port/port.h"
 #include "rocksdb/env.h"
+#include "rocksdb/utilities/env_registry.h"
 #include "util/coding.h"
 #include "util/env_chroot.h"
 #include "util/log_buffer.h"
@@ -1062,12 +1063,46 @@ TEST_P(EnvPosixTestWithParam, WritableFileWrapper) {
 
 INSTANTIATE_TEST_CASE_P(DefaultEnv, EnvPosixTestWithParam,
                         ::testing::Values(Env::Default()));
-#if !defined(ROCKSDB_LITE) && !defined(OS_WIN)
+#ifndef ROCKSDB_LITE
+#ifndef OS_WIN
 static unique_ptr<Env> chroot_env(NewChrootEnv(Env::Default(),
                                                test::TmpDir(Env::Default())));
 INSTANTIATE_TEST_CASE_P(ChrootEnv, EnvPosixTestWithParam,
                         ::testing::Values(chroot_env.get()));
-#endif  // !defined(ROCKSDB_LITE) && !defined(OS_WIN)
+#endif  // !OS_WIN
+namespace {
+
+// Returns a vector of 0 or 1 Env*, depending whether an Env is registered for
+// ENV_TEST_URI.
+//
+// The purpose of returning an empty vector (instead of nullptr) is that gtest
+// ValuesIn() will skip running the test when given an empty collection.
+std::vector<Env*> GetCustomEnvs() {
+  static std::vector<std::unique_ptr<Env>> custom_envs;
+  static bool init = false;
+  if (!init) {
+    init = true;
+    const char* uri = getenv("ENV_TEST_URI");
+    if (uri != nullptr) {
+      std::unique_ptr<Env> env = NewEnvFromUri(uri);
+      if (env != nullptr) {
+        custom_envs.push_back(std::move(env));
+      }
+    }
+  }
+
+  std::vector<Env*> res;
+  for (const auto& custom_env : custom_envs) {
+    res.push_back(custom_env.get());
+  }
+  return res;
+}
+
+}  // anonymous namespace
+
+INSTANTIATE_TEST_CASE_P(CustomEnv, EnvPosixTestWithParam,
+                        ::testing::ValuesIn(GetCustomEnvs()));
+#endif  // !ROCKSDB_LITE
 
 }  // namespace rocksdb
 
