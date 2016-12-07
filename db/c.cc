@@ -1877,7 +1877,7 @@ void rocksdb_options_set_fifo_compaction_options(
 }
 
 void rocksdb_options_set_compaction_pri(rocksdb_options_t* opt, int pri) {
-  opt->rep.compaction_pri = pri;
+  opt->rep.compaction_pri = static_cast<rocksdb::CompactionPri>pri;
 }
 
 char *rocksdb_options_statistics_get_string(rocksdb_options_t *opt) {
