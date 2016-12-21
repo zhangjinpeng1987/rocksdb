@@ -986,39 +986,49 @@ int main(int argc, char** argv) {
   StartPhase("total_order_seek");
   {
     // Create new database
-    rocksdb_options_set_prefix_extractor(options, rocksdb_slicetransform_create_fixed_prefix(3));
-    db = rocksdb_open(options, dbname, &err);
+    rocksdb_options_t* options_total_order_seek = rocksdb_options_create();
+    rocksdb_options_set_prefix_extractor(
+        options_total_order_seek, rocksdb_slicetransform_create_fixed_prefix(3));
+    rocksdb_options_set_create_if_missing(options_total_order_seek, 1);
+    db = rocksdb_open(options_total_order_seek, dbname, &err);
     CheckNoError(err);
 
     rocksdb_put(db, woptions, "foo1", 4, "foo", 3, &err);
     CheckNoError(err);
     rocksdb_put(db, woptions, "foo2", 4, "foo", 3, &err);
     CheckNoError(err);
-    rocksdb_put(db, woptions, "foo3", 4, "foo", 3, &err);
-    CheckNoError(err);
     rocksdb_put(db, woptions, "bar1", 4, "bar", 3, &err);
     CheckNoError(err);
     rocksdb_put(db, woptions, "bar2", 4, "bar", 3, &err);
     CheckNoError(err);
-    rocksdb_put(db, woptions, "bar3", 4, "bar", 3, &err);
+
+    rocksdb_flushoptions_t* foptions = rocksdb_flushoptions_create();
+    rocksdb_flush(db, foptions, &err);
     CheckNoError(err);
+    rocksdb_flushoptions_destroy(foptions);
 
     rocksdb_iterator_t* iter = rocksdb_create_iterator(db, roptions);
     CheckCondition(!rocksdb_iter_valid(iter));
+    rocksdb_iter_seek(iter, "bao", 3);
+    rocksdb_iter_get_error(iter, &err);
+    CheckNoError(err);
+    CheckIter(iter, "bar1", "bar");
+    CheckCondition(rocksdb_iter_valid(iter));
+    rocksdb_iter_destroy(iter);
 
+    rocksdb_readoptions_set_total_order_seek(roptions, 1);
+    iter = rocksdb_create_iterator(db, roptions);
+    CheckCondition(!rocksdb_iter_valid(iter));
     rocksdb_iter_seek(iter, "bao", 3);
     rocksdb_iter_get_error(iter, &err);
     CheckNoError(err);
     CheckCondition(rocksdb_iter_valid(iter));
     rocksdb_iter_destroy(iter);
 
-    rocksdb_readoptions_set_total_order_seek(roptions, 1);
-    rocksdb_iterator_t* iter = rocksdb_create_iterator(db, roptions);
-
-
     rocksdb_readoptions_set_total_order_seek(roptions, 0);
     rocksdb_close(db);
     rocksdb_destroy_db(options, dbname, &err);
+    rocksdb_options_destroy(options_total_order_seek);
   }
 
   StartPhase("cuckoo_options");
