@@ -1956,6 +1956,11 @@ rocksdb_compactionfilterfactory_t* rocksdb_compactionfilterfactory_create(
   return result;
 }
 
+void rocksdb_readoptions_set_total_order_seek(rocksdb_readoptions_t* opt,
+                                              unsigned char v) {
+  opt->rep.total_order_seek = v;
+}
+
 void rocksdb_compactionfilterfactory_destroy(
     rocksdb_compactionfilterfactory_t* factory) {
   delete factory;
