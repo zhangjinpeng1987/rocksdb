@@ -551,8 +551,8 @@ void CompactionIterator::PrepareOutput() {
       ikey_.type != kTypeMerge &&
       !cmp_->Equal(compaction_->GetLargestUserKey(), ikey_.user_key)) {
     assert(ikey_.type != kTypeDeletion && ikey_.type != kTypeSingleDeletion);
-    ikey_.sequence = 0;
-    current_key_.UpdateInternalKey(0, ikey_.type);
+    //ikey_.sequence = 0;
+    //current_key_.UpdateInternalKey(0, ikey_.type);
   }
 }
 
