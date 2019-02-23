@@ -1051,7 +1051,7 @@ void CompactionJob::ProcessKeyValueCompaction(SubcompactionState* sub_compact) {
       input_status = input->status();
       output_file_ended = true;
 
-      // Move current guard
+      // Move to next current guard
       current_guard_idx = NextGuardIdx(guards, current_guard_idx, c_iter->key());
       if (current_guard_idx >= 0) {
         current_guard = Slice(guards[current_guard_idx]);
