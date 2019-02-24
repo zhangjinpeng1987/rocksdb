@@ -1006,11 +1006,10 @@ void CompactionJob::ProcessKeyValueCompaction(SubcompactionState* sub_compact) {
       input_status = input->status();
       output_file_ended = true;
     }
-    if (!last_key.empty()) {
+    if (!last_key.empty() && sub_compact->compaction->output_level() != 0) {
       // Split index and data
-      if ((last_key.size() > 2 && last_key[1] == 'm' && key.size() > 2 && key[1] == 't') || 
-          (last_key.size() > 13 && last_key[1] == 't' && key.size() > 13 && key[1] == 't' &&
-            ((last_key[12] == 'i' && key[12] == 'r') || (last_key[12] == 'r' && key[12] == 't')))) {
+      if (last_key.size() > 13 && key.size() > 13 && last_key[1] == 't' && key[1] == 't' &&
+          memcmp(last_key.data(), key.data(), 13) != 0) {
         input_status = input->status();
         output_file_ended = true;
       }
