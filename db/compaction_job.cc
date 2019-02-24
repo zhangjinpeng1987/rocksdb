@@ -904,6 +904,7 @@ void CompactionJob::ProcessKeyValueCompaction(SubcompactionState* sub_compact) {
   std::string dict_sample_data;
   dict_sample_data.reserve(kSampleBytes);
 
+  std::string last_key;
   while (status.ok() && !cfd->IsDropped() && c_iter->Valid()) {
     // Invariant: c_iter.status() is guaranteed to be OK if c_iter->Valid()
     // returns true.
@@ -1005,6 +1006,16 @@ void CompactionJob::ProcessKeyValueCompaction(SubcompactionState* sub_compact) {
       input_status = input->status();
       output_file_ended = true;
     }
+    if (sub_compact->compaction->output_level() != 0 && !last_key.empty()) {
+      // Split index and data
+      if (last_key.size() > 13 && last_key[1] == 't'
+          && key.size() > 13 && key[1] == 't' &&
+          last_key[12] == 'i' && key[12] == 'r') {
+        input_status = input->status();
+        output_file_ended = true;
+      }
+    }
+    last_key = std::string(key.data(), key.size());
     c_iter->Next();
     if (!output_file_ended && c_iter->Valid() &&
         sub_compact->compaction->output_level() != 0 &&
