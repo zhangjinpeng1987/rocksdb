@@ -629,6 +629,10 @@ struct AdvancedColumnFamilyOptions {
   // NOT SUPPORTED ANYMORE
   // Does not have any effect.
   bool purge_redundant_kvs_while_flush = true;
+
+  // Get guards for a compaction
+  std::vector<std::string> (*compaction_guards)(Slice *smallest_key,
+                                                Slice *largest_key) = nullptr;
 };
 
 }  // namespace rocksdb

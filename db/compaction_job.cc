@@ -828,13 +828,6 @@ void CompactionJob::ProcessKeyValueCompaction(SubcompactionState* sub_compact) {
     prev_prepare_write_nanos = IOSTATS(prepare_write_nanos);
   }
 
-  // TODO: user provide guards
-  std::vector<std::string> guards;
-  Slice current_guard;
-  int current_guard_idx = -1;
-
-  std::sort(guards.begin(), guards.end());
-
   const MutableCFOptions* mutable_cf_options =
       sub_compact->compaction->mutable_cf_options();
 
@@ -870,6 +863,14 @@ void CompactionJob::ProcessKeyValueCompaction(SubcompactionState* sub_compact) {
       }
     }
   }
+
+  // Get guards for this compaction.
+  std::vector<std::string> guards;
+  if (cfd->ioptions()->compaction_guards != nullptr) {
+    guards = cfd->ioptions()->compaction_guards(sub_compact->start, sub_compact->end);
+  }
+  Slice current_guard;
+  int current_guard_idx = -1;
 
   auto compaction_filter = cfd->ioptions()->compaction_filter;
   std::unique_ptr<CompactionFilter> compaction_filter_from_factory = nullptr;

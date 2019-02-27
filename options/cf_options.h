@@ -121,6 +121,8 @@ struct ImmutableCFOptions {
   const SliceTransform* memtable_insert_with_hint_prefix_extractor;
 
   std::vector<DbPath> cf_paths;
+
+  std::vector<std::string> (*compaction_guards) (Slice *smallest_key, Slice *largest_key);
 };
 
 struct MutableCFOptions {
