@@ -12,7 +12,7 @@ namespace rocksdb {
     class CompactionGuard {
     public:
         virtual ~CompactionGuard() {}
-        virtual std::vector<std::string> get_guards_in_range(Slice *start, Slice *end) = 0;
+        virtual std::vector<std::string> GetGuardsInRange(Slice *start, Slice *end) = 0;
     };
 
 }
