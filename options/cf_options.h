@@ -11,6 +11,7 @@
 #include "db/dbformat.h"
 #include "options/db_options.h"
 #include "rocksdb/options.h"
+#include "rocksdb/compaction_guard.h"
 #include "util/compression.h"
 
 namespace rocksdb {
@@ -122,7 +123,7 @@ struct ImmutableCFOptions {
 
   std::vector<DbPath> cf_paths;
 
-  std::vector<std::string> (*compaction_guards) (Slice *smallest_key, Slice *largest_key);
+  CompactionGuard *compaction_guard;
 };
 
 struct MutableCFOptions {

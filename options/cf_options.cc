@@ -79,7 +79,7 @@ ImmutableCFOptions::ImmutableCFOptions(const ImmutableDBOptions& db_options,
       memtable_insert_with_hint_prefix_extractor(
           cf_options.memtable_insert_with_hint_prefix_extractor.get()),
       cf_paths(cf_options.cf_paths),
-      compaction_guards(cf_options.compaction_guards) {}
+      compaction_guard(cf_options.compaction_guard) {}
 
 // Multiple two operands. If they overflow, return op1.
 uint64_t MultiplyCheckOverflow(uint64_t op1, double op2) {

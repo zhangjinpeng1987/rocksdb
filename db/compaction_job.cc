@@ -866,8 +866,8 @@ void CompactionJob::ProcessKeyValueCompaction(SubcompactionState* sub_compact) {
 
   // Get guards for this compaction.
   std::vector<std::string> guards;
-  if (cfd->ioptions()->compaction_guards != nullptr) {
-    guards = cfd->ioptions()->compaction_guards(sub_compact->start, sub_compact->end);
+  if (cfd->ioptions()->compaction_guard != nullptr) {
+    guards = cfd->ioptions()->compaction_guard->get_guards_in_range(sub_compact->start, sub_compact->end);
   }
   Slice current_guard;
   int current_guard_idx = -1;
