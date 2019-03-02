@@ -793,7 +793,7 @@ Status CompactionJob::Install(const MutableCFOptions& mutable_cf_options) {
 int NextGuardIdx(const std::vector<std::string> &guards, int current_idx, const Slice &key) {
   int next_idx = current_idx + 1;
   while (next_idx < int(guards.size())) {
-    if (Slice(guards[next_idx]).compare(key) >= 0) {
+    if (Slice(guards[next_idx]).compare(key) > 0) {
       return next_idx;
     }
     next_idx += 1;
@@ -871,6 +871,7 @@ void CompactionJob::ProcessKeyValueCompaction(SubcompactionState* sub_compact) {
   }
   Slice current_guard;
   int current_guard_idx = -1;
+  bool guard_end = false;
 
   auto compaction_filter = cfd->ioptions()->compaction_filter;
   std::unique_ptr<CompactionFilter> compaction_filter_from_factory = nullptr;
@@ -929,11 +930,12 @@ void CompactionJob::ProcessKeyValueCompaction(SubcompactionState* sub_compact) {
     const Slice& key = c_iter->key();
     const Slice& value = c_iter->value();
 
-    if (current_guard_idx < 0) {
-      current_guard_idx = NextGuardIdx(guards, current_guard_idx, key);
+    if (!guard_end && current_guard_idx < 0) {
+      current_guard_idx = NextGuardIdx(guards, current_guard_idx, c_iter->user_key());
       if (current_guard_idx >= 0) {
         current_guard = Slice(guards[current_guard_idx]);
       } else {
+        guard_end = true;
         current_guard = Slice();
       }
     }
@@ -1046,17 +1048,18 @@ void CompactionJob::ProcessKeyValueCompaction(SubcompactionState* sub_compact) {
       output_file_ended = true;
     }
     if (!output_file_ended && c_iter->Valid() &&
-        sub_compact->compaction->output_level() != 0 && !current_guard.empty() &&
-        current_guard.compare(c_iter->key()) <= 0) {
+        sub_compact->compaction->output_level() != 0 && !guard_end && !current_guard.empty() &&
+        c_iter->user_key().compare(current_guard) >= 0) {
       // (3) split by guards
       input_status = input->status();
       output_file_ended = true;
 
       // Move to next guard
-      current_guard_idx = NextGuardIdx(guards, current_guard_idx, c_iter->key());
+      current_guard_idx = NextGuardIdx(guards, current_guard_idx, c_iter->user_key());
       if (current_guard_idx >= 0) {
         current_guard = Slice(guards[current_guard_idx]);
       } else {
+        guard_end = true;
         current_guard = Slice();
       }
     }
