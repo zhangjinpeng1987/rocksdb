@@ -354,6 +354,7 @@ Status FlushJob::WriteLevel0Table() {
                       existing_snapshots_.empty() ? 0 : existing_snapshots_.back(),
                       snapshot_checker_);
 
+      iter.get()->SeekToFirst();
       CompactionIterator c_iter(
           iter.get(), cfd_->internal_comparator().user_comparator(), &merge, kMaxSequenceNumber,
           &existing_snapshots_, earliest_write_conflict_snapshot_, snapshot_checker_, db_options_.env,
