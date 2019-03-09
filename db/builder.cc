@@ -325,7 +325,7 @@ Status BuildPartTable(
         }
 
         // Split sst by guard when sst reach specified size.
-        if (builder->FileSize() >= 8*1024*1024) {
+        if (builder->FileSize() >= 32*1024*1024) {
           break;
         }
       }
