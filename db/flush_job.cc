@@ -354,12 +354,20 @@ Status FlushJob::WriteLevel0Table() {
                       existing_snapshots_.empty() ? 0 : existing_snapshots_.back(),
                       snapshot_checker_);
 
+      std::unique_ptr<RangeDelAggregator> range_del_agg(
+                  new RangeDelAggregator(cfd_->internal_comparator(), existing_snapshots_));
+      s = range_del_agg->AddTombstones(std::move(range_del_iter));
+      if (!s.ok()) {
+        // may be non-ok if a range tombstone key is unparsable
+        return s;
+      }
+
       iter.get()->SeekToFirst();
       CompactionIterator c_iter(
           iter.get(), cfd_->internal_comparator().user_comparator(), &merge, kMaxSequenceNumber,
           &existing_snapshots_, earliest_write_conflict_snapshot_, snapshot_checker_, db_options_.env,
           ShouldReportDetailedTime(db_options_.env, cfd_->ioptions()->statistics),
-          true /* internal key corruption is not ok */, nullptr /* range_del_iter */);
+          true /* internal key corruption is not ok */, range_del_agg.get());
       c_iter.SeekToFirst();
 
       std::vector<std::string> guards;
