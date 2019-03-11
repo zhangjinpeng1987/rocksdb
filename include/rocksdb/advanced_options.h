@@ -633,6 +633,9 @@ struct AdvancedColumnFamilyOptions {
 
   // Get guards for a compaction
   CompactionGuard *compaction_guard = nullptr;
+
+  // Level0 sst split size, compaction_guard is required.
+  uint64_t level0_split_size = 0;
 };
 
 }  // namespace rocksdb

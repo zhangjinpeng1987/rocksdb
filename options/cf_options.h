@@ -124,6 +124,8 @@ struct ImmutableCFOptions {
   std::vector<DbPath> cf_paths;
 
   CompactionGuard *compaction_guard;
+
+  uint64_t level0_split_size;
 };
 
 struct MutableCFOptions {
