@@ -591,14 +591,50 @@ class LevelIterator final : public InternalIterator {
   const std::vector<AtomicCompactionUnitBoundary>* compaction_boundaries_;
 };
 
-void LevelIterator::Seek(const Slice& target) {
-  size_t new_file_index = FindFile(icomparator_, *flevel_, target);
+// void LevelIterator::Seek(const Slice& target) {
+//   size_t new_file_index = FindFile(icomparator_, *flevel_, target);
 
-  InitFileIterator(new_file_index);
-  if (file_iter_.iter() != nullptr) {
-    file_iter_.Seek(target);
+//   InitFileIterator(new_file_index);
+//   if (file_iter_.iter() != nullptr) {
+//     file_iter_.Seek(target);
+//   }
+//   SkipEmptyFileForward();
+// }
+
+void LevelIterator::Seek(const Slice& target) {
+  bool reach_bound = false;
+  size_t new_file_index = FindFile(icomparator_, *flevel_, target);
+  while (new_file_index < flevel_->num_files) {
+    auto file = flevel_->files[new_file_index];
+    // prune files by upper bound
+    if (read_options_.iterate_upper_bound && icomparator_.user_comparator()->Compare(file.smallest_key, *read_options_.iterate_upper_bound) >= 0) {
+      reach_bound = true;
+      break;
+    }
+
+    // prune files by prefix bloom filter
+    if (read_options_.prefix && !table_cache_->PrefixMayMatch(
+        read_options_, *read_options_.prefix, icomparator_,
+        *file.file_metadata, prefix_extractor_,
+        file_read_hist_, false /* skip_filters */,
+        level_ /* level */)) {
+      new_file_index += 1;
+    } else {
+      break;
+    }
   }
-  SkipEmptyFileForward();
+
+  // reach end
+  if (reach_bound || new_file_index >= flevel_->num_files) {
+    file_index_ = new_file_index;
+    SetFileIterator(nullptr);
+  } else {
+    InitFileIterator(new_file_index);
+    if (file_iter_.iter() != nullptr) {
+      file_iter_.Seek(target);
+    }
+    SkipEmptyFileForward();
+  }
 }
 
 void LevelIterator::SeekForPrev(const Slice& target) {
@@ -1026,6 +1062,23 @@ void Version::AddIteratorsForLevel(const ReadOptions& read_options,
     // Merge all level zero files together since they may overlap
     for (size_t i = 0; i < storage_info_.LevelFilesBrief(0).num_files; i++) {
       const auto& file = storage_info_.LevelFilesBrief(0).files[i];
+
+      // prune files not in bound
+      if (read_options.iterate_upper_bound && read_options.iterate_upper_bound->compare(file.smallest_key) <= 0) {
+        continue;
+      }
+      if (read_options.iterate_lower_bound && read_options.iterate_lower_bound->compare(file.largest_key) > 0) {
+        continue;
+      }
+      // prune files by prefix bloom filter
+      if (read_options.prefix && !table_cache_->PrefixMayMatch(
+          read_options, *read_options.prefix, cfd_->internal_comparator(),
+          *file.file_metadata, mutable_cf_options_.prefix_extractor.get(),
+          cfd_->internal_stats()->GetFileReadHist(0), false /* skip_filters */,
+          0 /* level */)) {
+        continue;
+      }
+
       merge_iter_builder->AddIterator(cfd_->table_cache()->NewIterator(
           read_options, soptions, cfd_->internal_comparator(), *file.file_metadata,
           range_del_agg, mutable_cf_options_.prefix_extractor.get(), nullptr,
