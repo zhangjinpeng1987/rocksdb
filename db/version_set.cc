@@ -483,6 +483,7 @@ class LevelIterator final : public InternalIterator {
         should_sample_(should_sample),
         for_compaction_(for_compaction),
         skip_filters_(skip_filters),
+        skip_current_sst_filter_(false),
         file_index_(flevel_->num_files),
         level_(level),
         range_del_agg_(range_del_agg),
@@ -560,11 +561,15 @@ class LevelIterator final : public InternalIterator {
       smallest_compaction_key = (*compaction_boundaries_)[file_index_].smallest;
       largest_compaction_key = (*compaction_boundaries_)[file_index_].largest;
     }
+
+    bool skip_current_sst_filter = skip_current_sst_filter_;
+    skip_current_sst_filter_ = false;
+
     return table_cache_->NewIterator(
         read_options_, env_options_, icomparator_, *file_meta.file_metadata,
         range_del_agg_, prefix_extractor_,
         nullptr /* don't need reference to table */,
-        file_read_hist_, for_compaction_, nullptr /* arena */, skip_filters_,
+        file_read_hist_, for_compaction_, nullptr /* arena */, skip_current_sst_filter ? true : skip_filters_,
         level_, smallest_compaction_key, largest_compaction_key);
   }
 
@@ -580,6 +585,7 @@ class LevelIterator final : public InternalIterator {
   bool should_sample_;
   bool for_compaction_;
   bool skip_filters_;
+  bool skip_current_sst_filter_;
   size_t file_index_;
   int level_;
   RangeDelAggregator* range_del_agg_;
@@ -623,6 +629,8 @@ void LevelIterator::Seek(const Slice& target) {
       break;
     }
   }
+
+  skip_current_sst_filter_ = true;
 
   // reach end
   if (reach_bound || new_file_index >= flevel_->num_files) {
@@ -1082,7 +1090,7 @@ void Version::AddIteratorsForLevel(const ReadOptions& read_options,
       merge_iter_builder->AddIterator(cfd_->table_cache()->NewIterator(
           read_options, soptions, cfd_->internal_comparator(), *file.file_metadata,
           range_del_agg, mutable_cf_options_.prefix_extractor.get(), nullptr,
-          cfd_->internal_stats()->GetFileReadHist(0), false, arena,
+          cfd_->internal_stats()->GetFileReadHist(0), read_options.prefix != nullptr, arena,
           false /* skip_filters */, 0 /* level */));
     }
     if (should_sample) {
