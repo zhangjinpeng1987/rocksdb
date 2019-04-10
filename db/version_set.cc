@@ -630,7 +630,10 @@ void LevelIterator::Seek(const Slice& target) {
     }
   }
 
-  skip_current_sst_filter_ = true;
+  // this file has checked the filter
+  if (read_options_.prefix) {
+    skip_current_sst_filter_ = true;
+  }
 
   // reach end
   if (reach_bound || new_file_index >= flevel_->num_files) {
