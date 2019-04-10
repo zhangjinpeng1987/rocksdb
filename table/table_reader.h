@@ -86,7 +86,7 @@ class TableReader {
                      const SliceTransform* prefix_extractor,
                      bool skip_filters = false) = 0;
 
-  virtual bool FilterMayMatch(const Slice& /* prefix */) { return true; }
+  virtual bool FilterMayMatch(const Slice& /* prefix */, const SliceTransform* /*options_prefix_extractor*/) { return true; }
 
   // Prefetch data corresponding to a give range of keys
   // Typically this functionality is required for table implementations that

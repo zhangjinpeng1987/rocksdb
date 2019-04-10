@@ -320,9 +320,7 @@ bool TableCache::PrefixMayMatch(const ReadOptions& options,
     }
   }
   if (s.ok()) {
-    may_match = t->FilterMayMatch(prefix);
-  } else {
-    assert(false);
+    may_match = t->FilterMayMatch(prefix, prefix_extractor);
   }
 
   if (handle != nullptr) {
