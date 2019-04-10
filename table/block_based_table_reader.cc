@@ -2095,6 +2095,7 @@ BlockBasedTable::PartitionedIndexIteratorState::NewSecondaryIterator(
 
 bool BlockBasedTable::FilterMayMatch(const Slice& prefix) {
   if (!rep_->filter_policy) {
+    assert(false);
     return true;
   }
 
@@ -2102,6 +2103,7 @@ bool BlockBasedTable::FilterMayMatch(const Slice& prefix) {
   if (rep_->table_prefix_extractor != nullptr) {
     prefix_extractor = rep_->table_prefix_extractor.get();
   } else {
+    assert(false);
     return true;
   }
 
@@ -2112,7 +2114,11 @@ bool BlockBasedTable::FilterMayMatch(const Slice& prefix) {
     // Currently only support full filter.
     if (!filter->IsBlockBased()) {
       may_match = filter->FilterMayMatch(prefix);
+    } else {
+      assert(false);
     }
+  } else {
+    assert(false);
   }
 
   // if rep_->filter_entry is not set, we should call Release(); otherwise
