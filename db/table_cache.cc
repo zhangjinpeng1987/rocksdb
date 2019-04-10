@@ -321,7 +321,14 @@ bool TableCache::PrefixMayMatch(const ReadOptions& options,
   }
   if (s.ok()) {
     may_match = t->FilterMayMatch(prefix);
+  } else {
+    assert(false);
   }
+
+  if (handle != nullptr) {
+    ReleaseHandle(handle);
+  }
+
   return may_match;
 }
 
