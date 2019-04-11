@@ -1164,8 +1164,13 @@ InternalIterator* DBImpl::NewInternalIterator(const ReadOptions& read_options,
       !read_options.total_order_seek &&
           super_version->mutable_cf_options.prefix_extractor != nullptr);
   // Collect iterator for mutable mem
-  merge_iter_builder.AddIterator(
-      super_version->mem->NewIterator(read_options, arena));
+
+  if (read_options.prefix && !super_version->mem->PrefixMayMatch(*read_options.prefix)) {
+    // skip memtable by bloom filter
+  } else {
+    merge_iter_builder.AddIterator(
+        super_version->mem->NewIterator(read_options, arena));
+  }
   std::unique_ptr<FragmentedRangeTombstoneIterator> range_del_iter;
   Status s;
   if (!read_options.ignore_range_deletions) {
