@@ -472,7 +472,7 @@ class LevelIterator final : public InternalIterator {
       bool should_sample, HistogramImpl* file_read_hist, bool for_compaction,
       bool skip_filters, int level, RangeDelAggregator* range_del_agg,
       const std::vector<AtomicCompactionUnitBoundary>* compaction_boundaries =
-          nullptr)
+          nullptr, int file_index_hint = -1, bool skip_current_sst_filter = false)
       : table_cache_(table_cache),
         read_options_(read_options),
         env_options_(env_options),
@@ -483,9 +483,9 @@ class LevelIterator final : public InternalIterator {
         should_sample_(should_sample),
         for_compaction_(for_compaction),
         skip_filters_(skip_filters),
-        skip_current_sst_filter_(false),
+        skip_current_sst_filter_(skip_current_sst_filter),
         file_index_(flevel_->num_files),
-        file_index_hint_(-1),
+        file_index_hint_(file_index_hint),
         level_(level),
         range_del_agg_(range_del_agg),
         pinned_iters_mgr_(nullptr),
@@ -529,14 +529,6 @@ class LevelIterator final : public InternalIterator {
   virtual bool IsValuePinned() const override {
     return pinned_iters_mgr_ && pinned_iters_mgr_->PinningEnabled() &&
            file_iter_.iter() && file_iter_.IsValuePinned();
-  }
-
-  void SetFileIndexHint(int index) {
-    file_index_hint_ = index;
-  }
-
-  void SkipCurrentSstFilter() {
-    skip_current_sst_filter_ = true;
   }
 
  private:
@@ -1116,16 +1108,14 @@ void Version::AddIteratorsForLevel(const ReadOptions& read_options,
       }
 
       auto* mem = arena->AllocateAligned(sizeof(LevelIterator));
-      auto* level_iter = new (mem) LevelIterator(
+      merge_iter_builder->AddIterator(new (mem) LevelIterator(
           cfd_->table_cache(), read_options, soptions,
           cfd_->internal_comparator(), &storage_info_.LevelFilesBrief(level),
           mutable_cf_options_.prefix_extractor.get(), should_sample_file_read(),
           cfd_->internal_stats()->GetFileReadHist(level),
           false /* for_compaction */, IsFilterSkipped(level), level,
-          range_del_agg);
-      level_iter->SetFileIndexHint(file_index);
-      level_iter->SkipCurrentSstFilter();
-      merge_iter_builder->AddIterator(level_iter);
+          range_del_agg, nullptr /* compaction_boundaries */,
+          file_index /* file_index_hint */, true /* skip_current_sst_filter */));
     } else {
       // For levels > 0, we can use a concatenating iterator that sequentially
       // walks through the non-overlapping files in the level, opening them
