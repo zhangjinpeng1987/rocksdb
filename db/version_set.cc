@@ -613,7 +613,8 @@ void LevelIterator::Seek(const Slice& target) {
   while (new_file_index < flevel_->num_files) {
     auto file = flevel_->files[new_file_index];
     // prune files by upper bound
-    if (read_options_.iterate_upper_bound && icomparator_.user_comparator()->Compare(file.smallest_key, *read_options_.iterate_upper_bound) >= 0) {
+    if (read_options_.iterate_upper_bound && icomparator_.user_comparator()->Compare(
+      ExtractUserKey(file.smallest_key), *read_options_.iterate_upper_bound) >= 0) {
       reach_bound = true;
       break;
     }
@@ -1075,10 +1076,12 @@ void Version::AddIteratorsForLevel(const ReadOptions& read_options,
       const auto& file = storage_info_.LevelFilesBrief(0).files[i];
 
       // prune files not in bound
-      if (read_options.iterate_upper_bound && read_options.iterate_upper_bound->compare(file.smallest_key) <= 0) {
+      if (read_options.iterate_upper_bound && cfd_->user_comparator()->Compare(
+            *read_options.iterate_upper_bound, ExtractUserKey(file.smallest_key)) <= 0) {
         continue;
       }
-      if (read_options.iterate_lower_bound && read_options.iterate_lower_bound->compare(file.largest_key) > 0) {
+      if (read_options.iterate_lower_bound && cfd_->user_comparator()->Compare(
+            *read_options.iterate_lower_bound, ExtractUserKey(file.largest_key)) > 0) {
         continue;
       }
       // prune files by prefix bloom filter
