@@ -485,6 +485,7 @@ class LevelIterator final : public InternalIterator {
         skip_filters_(skip_filters),
         skip_current_sst_filter_(false),
         file_index_(flevel_->num_files),
+        file_index_hint_(-1),
         level_(level),
         range_del_agg_(range_del_agg),
         pinned_iters_mgr_(nullptr),
@@ -530,6 +531,14 @@ class LevelIterator final : public InternalIterator {
            file_iter_.iter() && file_iter_.IsValuePinned();
   }
 
+  void SetFileIndexHint(int index) {
+    file_index_hint_ = index;
+  }
+
+  void SkipCurrentSstFilter() {
+    skip_current_sst_filter_ = true;
+  }
+
  private:
   void SkipEmptyFileForward();
   void SkipEmptyFileBackward();
@@ -569,7 +578,7 @@ class LevelIterator final : public InternalIterator {
         read_options_, env_options_, icomparator_, *file_meta.file_metadata,
         range_del_agg_, prefix_extractor_,
         nullptr /* don't need reference to table */,
-        file_read_hist_, for_compaction_, nullptr /* arena */, skip_current_sst_filter ? true : skip_filters_,
+        file_read_hist_, for_compaction_, nullptr /* arena */, skip_current_sst_filter || skip_filters_,
         level_, smallest_compaction_key, largest_compaction_key);
   }
 
@@ -587,6 +596,7 @@ class LevelIterator final : public InternalIterator {
   bool skip_filters_;
   bool skip_current_sst_filter_;
   size_t file_index_;
+  int file_index_hint_;
   int level_;
   RangeDelAggregator* range_del_agg_;
   IteratorWrapper file_iter_;  // May be nullptr
@@ -597,56 +607,20 @@ class LevelIterator final : public InternalIterator {
   const std::vector<AtomicCompactionUnitBoundary>* compaction_boundaries_;
 };
 
-// void LevelIterator::Seek(const Slice& target) {
-//   size_t new_file_index = FindFile(icomparator_, *flevel_, target);
-
-//   InitFileIterator(new_file_index);
-//   if (file_iter_.iter() != nullptr) {
-//     file_iter_.Seek(target);
-//   }
-//   SkipEmptyFileForward();
-// }
-
 void LevelIterator::Seek(const Slice& target) {
-  bool reach_bound = false;
-  size_t new_file_index = FindFile(icomparator_, *flevel_, target);
-  while (new_file_index < flevel_->num_files) {
-    auto file = flevel_->files[new_file_index];
-    // prune files by upper bound
-    if (read_options_.iterate_upper_bound && icomparator_.user_comparator()->Compare(
-      ExtractUserKey(file.smallest_key), *read_options_.iterate_upper_bound) >= 0) {
-      reach_bound = true;
-      break;
-    }
-
-    // prune files by prefix bloom filter
-    if (read_options_.prefix && !table_cache_->PrefixMayMatch(
-        read_options_, *read_options_.prefix, icomparator_,
-        *file.file_metadata, prefix_extractor_,
-        file_read_hist_, false /* skip_filters */,
-        level_ /* level */)) {
-      new_file_index += 1;
-    } else {
-      break;
-    }
-  }
-
-  // this file has checked the filter
-  if (read_options_.prefix) {
-    skip_current_sst_filter_ = true;
-  }
-
-  // reach end
-  if (reach_bound || new_file_index >= flevel_->num_files) {
-    file_index_ = new_file_index;
-    SetFileIterator(nullptr);
+  size_t new_file_index = 0;
+  if (file_index_hint_ >= 0) {
+    new_file_index = size_t(file_index_hint_);
+    file_index_hint_ = -1;
   } else {
-    InitFileIterator(new_file_index);
-    if (file_iter_.iter() != nullptr) {
-      file_iter_.Seek(target);
-    }
-    SkipEmptyFileForward();
+    new_file_index = FindFile(icomparator_, *flevel_, target);
   }
+
+  InitFileIterator(new_file_index);
+  if (file_iter_.iter() != nullptr) {
+    file_iter_.Seek(target);
+  }
+  SkipEmptyFileForward();
 }
 
 void LevelIterator::SeekForPrev(const Slice& target) {
@@ -1109,17 +1083,62 @@ void Version::AddIteratorsForLevel(const ReadOptions& read_options,
       }
     }
   } else if (storage_info_.LevelFilesBrief(level).num_files > 0) {
-    // For levels > 0, we can use a concatenating iterator that sequentially
-    // walks through the non-overlapping files in the level, opening them
-    // lazily.
-    auto* mem = arena->AllocateAligned(sizeof(LevelIterator));
-    merge_iter_builder->AddIterator(new (mem) LevelIterator(
-        cfd_->table_cache(), read_options, soptions,
-        cfd_->internal_comparator(), &storage_info_.LevelFilesBrief(level),
-        mutable_cf_options_.prefix_extractor.get(), should_sample_file_read(),
-        cfd_->internal_stats()->GetFileReadHist(level),
-        false /* for_compaction */, IsFilterSkipped(level), level,
-        range_del_agg));
+    // Check by bloom fitler first
+    if (read_options.prefix) {
+      auto level_brief = storage_info_.LevelFilesBrief(level);
+      bool reach_bound = false;
+      int file_index = FindFileInRange(cfd_->internal_comparator(), level_brief,
+          *read_options.prefix, 0, static_cast<uint32_t>(level_brief.num_files));
+      while (file_index < int(level_brief.num_files)) {
+        auto file = level_brief.files[file_index];
+        // Prune files by upper bound
+        if (read_options.iterate_upper_bound && cfd_->user_comparator()->Compare(
+          ExtractUserKey(file.smallest_key), *read_options.iterate_upper_bound) >= 0) {
+          reach_bound = true;
+          break;
+        }
+
+        // Prune files by prefix bloom filter
+        if (read_options.prefix && !table_cache_->PrefixMayMatch(
+            read_options, *read_options.prefix, cfd_->internal_comparator(),
+            *file.file_metadata, mutable_cf_options_.prefix_extractor.get(),
+            cfd_->internal_stats()->GetFileReadHist(level), false /* skip_filters */,
+            level /* level */)) {
+          file_index += 1;
+        } else {
+          break;
+        }
+      }
+
+      if (reach_bound || file_index >= int(level_brief.num_files)) {
+        // No necessary create iterator for this level.
+        return;
+      }
+
+      auto* mem = arena->AllocateAligned(sizeof(LevelIterator));
+      auto* level_iter = new (mem) LevelIterator(
+          cfd_->table_cache(), read_options, soptions,
+          cfd_->internal_comparator(), &storage_info_.LevelFilesBrief(level),
+          mutable_cf_options_.prefix_extractor.get(), should_sample_file_read(),
+          cfd_->internal_stats()->GetFileReadHist(level),
+          false /* for_compaction */, IsFilterSkipped(level), level,
+          range_del_agg);
+      level_iter->SetFileIndexHint(file_index);
+      level_iter->SkipCurrentSstFilter();
+      merge_iter_builder->AddIterator(level_iter);
+    } else {
+      // For levels > 0, we can use a concatenating iterator that sequentially
+      // walks through the non-overlapping files in the level, opening them
+      // lazily.
+      auto* mem = arena->AllocateAligned(sizeof(LevelIterator));
+      merge_iter_builder->AddIterator(new (mem) LevelIterator(
+          cfd_->table_cache(), read_options, soptions,
+          cfd_->internal_comparator(), &storage_info_.LevelFilesBrief(level),
+          mutable_cf_options_.prefix_extractor.get(), should_sample_file_read(),
+          cfd_->internal_stats()->GetFileReadHist(level),
+          false /* for_compaction */, IsFilterSkipped(level), level,
+          range_del_agg));
+    }
   }
 }
 
