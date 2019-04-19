@@ -51,6 +51,8 @@ class TitanDBImpl::FileManager : public BlobFileManager {
       }
       if (!s.ok()) return s;
 
+      ROCKS_LOG_INFO(db_->db_options_.info_log, "Titan adding blob file [%llu]",
+                     file.first->file_number());
       edit.AddBlobFile(file.first);
     }
 
@@ -263,6 +265,11 @@ Status TitanDBImpl::CreateColumnFamilies(
   return s;
 }
 
+Status TitanDBImpl::DropColumnFamily(
+    ColumnFamilyHandle* handle) {
+  return DropColumnFamilies({handle});
+}
+
 Status TitanDBImpl::DropColumnFamilies(
     const std::vector<ColumnFamilyHandle*>& handles) {
   std::vector<uint32_t> column_families;
@@ -414,7 +421,7 @@ Iterator* TitanDBImpl::NewIteratorImpl(
   }
   std::unique_ptr<ArenaWrappedDBIter> iter(db_impl_->NewIteratorImpl(
       options, cfd, snap->GetSequenceNumber(), nullptr /*read_callback*/,
-      true /*allow_blob*/, sv));
+      true /*allow_blob*/, true /*allow_refresh*/, sv));
   return new TitanDBIterator(options, storage.lock().get(), snapshot,
                              std::move(iter));
 }
