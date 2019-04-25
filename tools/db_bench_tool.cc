@@ -4627,7 +4627,7 @@ void VerifyDBFromDB(std::string& truth_db_name) {
       }
       if (FLAGS_use_iterate_prefix && prefix_extractor_) {
         iterate_prefix = prefix_extractor_->Transform(key);
-        options.iterate_prefix = &iterate_prefix;
+        options.prefix = &iterate_prefix;
       }
       if (!FLAGS_use_tailing_iterator) {
         if (db_.db != nullptr) {
