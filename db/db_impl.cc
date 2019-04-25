@@ -1859,9 +1859,9 @@ ArenaWrappedDBIter* DBImpl::NewIteratorImpl(const ReadOptions& read_options,
       sv->version_number, read_callback, this, cfd, allow_blob,
       ((read_options.snapshot != nullptr) ? false : allow_refresh));
 
-  InternalIterator* internal_iter =
-      NewInternalIterator(read_options, cfd, sv, db_iter->GetArena(),
-                          db_iter->GetRangeDelAggregator(), snapshot, is_user_sv);
+  InternalIterator* internal_iter = NewInternalIterator(
+      read_options, cfd, sv, db_iter->GetArena(),
+      db_iter->GetRangeDelAggregator(), snapshot, is_user_sv);
   db_iter->SetIterUnderDBIter(internal_iter);
 
   return db_iter;

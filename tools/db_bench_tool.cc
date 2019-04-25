@@ -1033,9 +1033,10 @@ DEFINE_int32(prefix_size, 0, "control the prefix size for HashSkipList and "
 DEFINE_int64(keys_per_prefix, 0, "control average number of keys generated "
              "per prefix, 0 means no special handling of the prefix, "
              "i.e. use the prefix comes with the generated random number.");
-DEFINE_int32(memtable_insert_with_hint_prefix_size, 0,
-             "If non-zero, enable "
-             "memtable insert with hint with the given prefix size.");
+DEFINE_bool(use_iterate_prefix, false, "Set iterate_prefix for prefix seek.")
+    DEFINE_int32(memtable_insert_with_hint_prefix_size, 0,
+                 "If non-zero, enable "
+                 "memtable insert with hint with the given prefix size.");
 DEFINE_bool(enable_io_prio, false, "Lower the background flush/compaction "
             "threads' IO priority");
 DEFINE_bool(enable_cpu_prio, false, "Lower the background flush/compaction "
@@ -4603,6 +4604,7 @@ void VerifyDBFromDB(std::string& truth_db_name) {
     Slice upper_bound = AllocateKey(&upper_bound_key_guard);
     std::unique_ptr<const char[]> lower_bound_key_guard;
     Slice lower_bound = AllocateKey(&lower_bound_key_guard);
+    Slice iterate_prefix;
 
     Duration duration(FLAGS_duration, reads_);
     char value_buffer[256];
@@ -4623,7 +4625,10 @@ void VerifyDBFromDB(std::string& truth_db_name) {
           options.iterate_upper_bound = &upper_bound;
         }
       }
-
+      if (FLAGS_use_iterate_prefix && prefix_extractor_) {
+        iterate_prefix = prefix_extractor_->Transform(key);
+        options.iterate_prefix = &iterate_prefix;
+      }
       if (!FLAGS_use_tailing_iterator) {
         if (db_.db != nullptr) {
           delete single_iter;

@@ -265,8 +265,7 @@ Status TitanDBImpl::CreateColumnFamilies(
   return s;
 }
 
-Status TitanDBImpl::DropColumnFamily(
-    ColumnFamilyHandle* handle) {
+Status TitanDBImpl::DropColumnFamily(ColumnFamilyHandle* handle) {
   return DropColumnFamilies({handle});
 }
 
