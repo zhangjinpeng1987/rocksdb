@@ -802,9 +802,29 @@ Status CompactionJob::Install(const MutableCFOptions& mutable_cf_options) {
   return status;
 }
 
+int NextGuardIdx(const std::vector<std::string> &guards, int current_idx, const Slice &key) {
+  int next_idx = current_idx + 1;
+  while (next_idx < int(guards.size())) {
+    if (Slice(guards[next_idx]).compare(key) > 0) {
+      return next_idx;
+    }
+    next_idx += 1;
+  }
+  return -1;
+}
+
 void CompactionJob::ProcessKeyValueCompaction(SubcompactionState* sub_compact) {
   assert(sub_compact != nullptr);
   ColumnFamilyData* cfd = sub_compact->compaction->column_family_data();
+
+  // Get guards for this compaction.
+  std::vector<std::string> guards;
+  if (cfd->ioptions()->compaction_guard != nullptr) {
+    guards = cfd->ioptions()->compaction_guard->GetGuardsInRange(sub_compact->start, sub_compact->end);
+  }
+  Slice current_guard;
+  int current_guard_idx = -1;
+  bool guard_end = false;
 
   // Create compaction filter and fail the compaction if
   // IgnoreSnapshots() = false because it is not supported anymore
@@ -936,6 +956,16 @@ void CompactionJob::ProcessKeyValueCompaction(SubcompactionState* sub_compact) {
     const Slice& key = c_iter->key();
     const Slice& value = c_iter->value();
 
+    if (!guard_end && current_guard_idx < 0) {
+      current_guard_idx = NextGuardIdx(guards, current_guard_idx, c_iter->user_key());
+      if (current_guard_idx >= 0) {
+        current_guard = Slice(guards[current_guard_idx]);
+      } else {
+        guard_end = true;
+        current_guard = Slice();
+      }
+    }
+
     // If an end key (exclusive) is specified, check if the current key is
     // >= than it and exit if it is because the iterator is out of its range
     if (end != nullptr &&
@@ -1042,6 +1072,22 @@ void CompactionJob::ProcessKeyValueCompaction(SubcompactionState* sub_compact) {
       // FinishCompactionOutputFile().
       input_status = input->status();
       output_file_ended = true;
+    }
+    if (!output_file_ended && c_iter->Valid() &&
+        sub_compact->compaction->output_level() != 0 && !guard_end && !current_guard.empty() &&
+        c_iter->user_key().compare(current_guard) >= 0) {
+      // (3) split by guards
+      input_status = input->status();
+      output_file_ended = true;
+
+       // Move to next guard
+      current_guard_idx = NextGuardIdx(guards, current_guard_idx, c_iter->user_key());
+      if (current_guard_idx >= 0) {
+        current_guard = Slice(guards[current_guard_idx]);
+      } else {
+        guard_end = true;
+        current_guard = Slice();
+      }
     }
     if (output_file_ended) {
       const Slice* next_key = nullptr;

@@ -11,6 +11,7 @@
 #include <memory>
 
 #include "rocksdb/memtablerep.h"
+#include "rocksdb/compaction_guard.h"
 #include "rocksdb/universal_compaction.h"
 
 namespace rocksdb {
@@ -669,6 +670,12 @@ struct AdvancedColumnFamilyOptions {
   // NOT SUPPORTED ANYMORE
   // Does not have any effect.
   bool purge_redundant_kvs_while_flush = true;
+
+  // Get guards for a compaction
+  CompactionGuard *compaction_guard = nullptr;
+
+  // Level0 sst split size, compaction_guard is required.
+  uint64_t level0_split_size = 0;
 };
 
 }  // namespace rocksdb

@@ -105,6 +105,7 @@ class CompactionIterator {
   bool Valid() const { return valid_; }
   const Slice& user_key() const { return current_user_key_; }
   const CompactionIterationStats& iter_stats() const { return iter_stats_; }
+  const Status input_status() const { return input_->status(); }
 
  private:
   // Processes the input stream to find the next output

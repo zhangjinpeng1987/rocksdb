@@ -10,6 +10,7 @@
 
 #include "db/dbformat.h"
 #include "options/db_options.h"
+#include "rocksdb/compaction_guard.h"
 #include "rocksdb/options.h"
 #include "util/compression.h"
 
@@ -120,6 +121,10 @@ struct ImmutableCFOptions {
   const SliceTransform* memtable_insert_with_hint_prefix_extractor;
 
   std::vector<DbPath> cf_paths;
+
+  CompactionGuard *compaction_guard;
+
+  uint64_t level0_split_size;
 };
 
 struct MutableCFOptions {

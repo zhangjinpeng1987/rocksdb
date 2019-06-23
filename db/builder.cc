@@ -240,4 +240,192 @@ Status BuildTable(
   return s;
 }
 
+int FlushNextGuardIdx(const std::vector<std::string>& guards, int current_idx, const Slice &key) {
+  int next_idx = current_idx + 1;
+  while (next_idx < int(guards.size())) {
+    if (Slice(guards[next_idx]).compare(key) > 0) {
+      return next_idx;
+    }
+    next_idx += 1;
+  }
+  return -1;
+}
+
+Status BuildPartTable(
+    const std::string& dbname, Env* env, const ImmutableCFOptions& ioptions,
+    const MutableCFOptions& mutable_cf_options, const EnvOptions& env_options,
+    TableCache* table_cache, CompactionIterator& c_iter, FileMetaData* meta,
+    const InternalKeyComparator& internal_comparator,
+    const std::vector<std::unique_ptr<IntTblPropCollectorFactory>>*
+        int_tbl_prop_collector_factories,
+    uint32_t column_family_id, const std::string& column_family_name,
+    const CompressionType compression,
+    const CompressionOptions& compression_opts, bool paranoid_file_checks,
+    InternalStats* internal_stats, TableFileCreationReason reason,
+    const std::vector<std::string>& guards, Slice& current_guard, int& current_guard_idx, bool& guard_end,
+    EventLogger* event_logger, int job_id, const Env::IOPriority io_priority,
+    TableProperties* table_properties, int level, const uint64_t creation_time,
+    const uint64_t oldest_key_time, Env::WriteLifeTimeHint write_hint) {
+  assert((column_family_id ==
+          TablePropertiesCollectorFactory::Context::kUnknownColumnFamily) ==
+         column_family_name.empty());
+  // Reports the IOStats for flush for every following bytes.
+  const size_t kReportFlushIOStatsEvery = 1048576;
+  Status s;
+  meta->fd.file_size = 0;
+
+   std::string fname = TableFileName(ioptions.cf_paths, meta->fd.GetNumber(),
+                                    meta->fd.GetPathId());
+#ifndef ROCKSDB_LITE
+  EventHelpers::NotifyTableFileCreationStarted(
+      ioptions.listeners, dbname, column_family_name, fname, job_id, reason);
+#endif  // !ROCKSDB_LITE
+  TableProperties tp;
+
+   if (c_iter.Valid()) {
+    TableBuilder* builder;
+    unique_ptr<WritableFileWriter> file_writer;
+    {
+      unique_ptr<WritableFile> file;
+#ifndef NDEBUG
+      bool use_direct_writes = env_options.use_direct_writes;
+      TEST_SYNC_POINT_CALLBACK("BuildTable:create_file", &use_direct_writes);
+#endif  // !NDEBUG
+      s = NewWritableFile(env, fname, &file, env_options);
+      if (!s.ok()) {
+        EventHelpers::LogAndNotifyTableFileCreationFinished(
+            event_logger, ioptions.listeners, dbname, column_family_name, fname,
+            job_id, meta->fd, tp, reason, s);
+        return s;
+      }
+      file->SetIOPriority(io_priority);
+      file->SetWriteLifeTimeHint(write_hint);
+
+      file_writer.reset(new WritableFileWriter(std::move(file), fname,
+                                               env_options, ioptions.statistics,
+                                               ioptions.listeners));
+      builder = NewTableBuilder(
+          ioptions, mutable_cf_options, internal_comparator,
+          int_tbl_prop_collector_factories, column_family_id,
+          column_family_name, file_writer.get(), compression, compression_opts,
+          level, nullptr /* compression_dict */, false /* skip_filters */,
+          creation_time, oldest_key_time);
+    }
+
+     for (; c_iter.Valid(); c_iter.Next()) {
+      const Slice& key = c_iter.key();
+      const Slice& value = c_iter.value();
+
+       // Split sst file by guard
+      if (!guard_end && !current_guard.empty() &&
+        c_iter.user_key().compare(current_guard) >= 0) {
+        // Move to next guard
+        current_guard_idx = FlushNextGuardIdx(guards, current_guard_idx, c_iter.user_key());
+        if (current_guard_idx >= 0) {
+          current_guard = Slice(guards[current_guard_idx]);
+        } else {
+          guard_end = true;
+          current_guard = Slice();
+        }
+
+         // Split sst by guard when sst reach specified size.
+        uint64_t split_size = ioptions.level0_split_size > 0 ? ioptions.level0_split_size : 32*1024*1024;
+        if (builder->FileSize() >= split_size) {
+          break;
+        }
+      }
+
+       builder->Add(key, value);
+      meta->UpdateBoundaries(key, c_iter.ikey().sequence);
+
+       if (!guard_end && current_guard_idx < 0) {
+        current_guard_idx = FlushNextGuardIdx(guards, current_guard_idx, c_iter.user_key());
+        if (current_guard_idx >= 0) {
+          current_guard = Slice(guards[current_guard_idx]);
+        } else {
+          guard_end = true;
+          current_guard = Slice();
+        }
+      }
+
+       // TODO(noetzli): Update stats after flush, too.
+      if (io_priority == Env::IO_HIGH &&
+          IOSTATS(bytes_written) >= kReportFlushIOStatsEvery) {
+        ThreadStatusUtil::SetThreadOperationProperty(
+            ThreadStatus::FLUSH_BYTES_WRITTEN, IOSTATS(bytes_written));
+      }
+    }
+
+     // Finish and check for builder errors
+    tp = builder->GetTableProperties();
+    bool empty = builder->NumEntries() == 0 && tp.num_range_deletions == 0;
+    s = c_iter.status();
+    if (!s.ok() || empty) {
+      builder->Abandon();
+    } else {
+      s = builder->Finish();
+    }
+
+     if (s.ok() && !empty) {
+      uint64_t file_size = builder->FileSize();
+      meta->fd.file_size = file_size;
+      meta->marked_for_compaction = builder->NeedCompact();
+      assert(meta->fd.GetFileSize() > 0);
+      tp = builder->GetTableProperties(); // refresh now that builder is finished
+      if (table_properties) {
+        *table_properties = tp;
+      }
+    }
+    delete builder;
+
+     // Finish and check for file errors
+    if (s.ok() && !empty) {
+      StopWatch sw(env, ioptions.statistics, TABLE_SYNC_MICROS);
+      s = file_writer->Sync(ioptions.use_fsync);
+    }
+    if (s.ok() && !empty) {
+      s = file_writer->Close();
+    }
+
+     if (s.ok() && !empty) {
+      // Verify that the table is usable
+      // We set for_compaction to false and don't OptimizeForCompactionTableRead
+      // here because this is a special case after we finish the table building
+      // No matter whether use_direct_io_for_flush_and_compaction is true,
+      // we will regrad this verification as user reads since the goal is
+      // to cache it here for further user reads
+      std::unique_ptr<InternalIterator> it(table_cache->NewIterator(
+          ReadOptions(), env_options, internal_comparator, *meta,
+          nullptr /* range_del_agg */,
+          mutable_cf_options.prefix_extractor.get(), nullptr,
+          (internal_stats == nullptr) ? nullptr
+                                      : internal_stats->GetFileReadHist(0),
+          false /* for_compaction */, nullptr /* arena */,
+          false /* skip_filter */, level));
+      s = it->status();
+      if (s.ok() && paranoid_file_checks) {
+        for (it->SeekToFirst(); it->Valid(); it->Next()) {
+        }
+        s = it->status();
+      }
+    }
+  }
+
+   // Check for input iterator errors
+  if (!c_iter.input_status().ok()) {
+    s = c_iter.input_status();
+  }
+
+   if (!s.ok() || meta->fd.GetFileSize() == 0) {
+    env->DeleteFile(fname);
+  }
+
+   // Output to event logger and fire events.
+  EventHelpers::LogAndNotifyTableFileCreationFinished(
+      event_logger, ioptions.listeners, dbname, column_family_name, fname,
+      job_id, meta->fd, tp, reason, s);
+
+   return s;
+}
+
 }  // namespace rocksdb
